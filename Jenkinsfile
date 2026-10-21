@@ -2,18 +2,18 @@
 pipeline {
     agent any
 
-   options {
-    disableConcurrentBuilds()
-    skipDefaultCheckout(true)
-}
+    options {
+        disableConcurrentBuilds()
+        skipDefaultCheckout(true)
+    }
 
     environment {
-        // CHANGE THIS IP
-        TARGET_HOST = '52.207.246.170'
-        TARGET_USER = 'ubuntu'
-        DEPLOY_DIR  = '/home/ubuntu/todolist'
-        APP_NAME    = 'TOdolist'
-        SSH_CRED    = 'pytho_cicd_key'
+        TARGET_HOST  = '52.207.246.170'
+        TARGET_USER  = 'ubuntu'
+        DEPLOY_DIR   = '/home/ubuntu/todolist'
+        APP_NAME     = 'todolist'
+        SSH_CRED     = 'pytho_cicd_key'
+        HOST_KEY_FILE = '/var/lib/jenkins/.ssh/known_hosts'
     }
 
     stages {
@@ -28,6 +28,7 @@ pipeline {
                     test -f requirements.txt
                     test -f templates/index.html
                     test -d static
+
                     echo "Application source code verified."
                 '''
             }
@@ -39,20 +40,26 @@ pipeline {
                     set -eu
                     python3 --version
                     python3 -m py_compile app.py
+
                     echo "Python syntax validation successful."
                 '''
             }
         }
 
-        stage('3. Connect to Target EC2') {
+        stage('3. Verify SSH Host Key and Connect') {
             steps {
                 sshagent(credentials: [env.SSH_CRED]) {
                     sh '''
                         set -eu
-                        ssh -o BatchMode=yes \
-                            -o StrictHostKeyChecking=yes \
-                            ${TARGET_USER}@${TARGET_HOST} \
-                            "mkdir -p ${DEPLOY_DIR}"
+
+                        test -f "$HOST_KEY_FILE"
+
+                        ssh \
+                          -o BatchMode=yes \
+                          -o StrictHostKeyChecking=yes \
+                          -o UserKnownHostsFile="$HOST_KEY_FILE" \
+                          "$TARGET_USER@$TARGET_HOST" \
+                          "mkdir -p '$DEPLOY_DIR'"
 
                         echo "SSH connection successful."
                     '''
@@ -66,15 +73,17 @@ pipeline {
                     sh '''
                         set -eu
 
-                        ssh -o StrictHostKeyChecking=yes \
-                            ${TARGET_USER}@${TARGET_HOST} \
-                            'sudo env DEBIAN_FRONTEND=noninteractive apt-get update &&
-                             sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y
-                               python3 python3-pip python3-venv
-                               python3-dev build-essential
-                               nginx rsync curl'
+                        ssh \
+                          -o StrictHostKeyChecking=yes \
+                          -o UserKnownHostsFile="$HOST_KEY_FILE" \
+                          "$TARGET_USER@$TARGET_HOST" \
+                          'sudo apt-get update &&
+                           sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y
+                             python3 python3-pip python3-venv
+                             python3-dev build-essential
+                             nginx rsync curl'
 
-                        echo "Python and server packages installed."
+                        echo "Target packages installed."
                     '''
                 }
             }
@@ -87,13 +96,13 @@ pipeline {
                         set -eu
 
                         rsync -az --delete \
-                            --exclude='.git/' \
-                            --exclude='venv/' \
-                            --exclude='.venv/' \
-                            --exclude='__pycache__/' \
-                            --exclude='.env' \
-                            -e "ssh -o StrictHostKeyChecking=yes" \
-                            ./ ${TARGET_USER}@${TARGET_HOST}:${DEPLOY_DIR}/
+                          --exclude='.git/' \
+                          --exclude='venv/' \
+                          --exclude='.venv/' \
+                          --exclude='__pycache__/' \
+                          --exclude='.env' \
+                          -e "ssh -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$HOST_KEY_FILE" \
+                          ./ "$TARGET_USER@$TARGET_HOST:$DEPLOY_DIR/"
 
                         echo "Application files transferred."
                     '''
@@ -101,21 +110,23 @@ pipeline {
             }
         }
 
-        stage('6. Create Virtual Environment and Install Packages') {
+        stage('6. Create Virtual Environment and Install Dependencies') {
             steps {
                 sshagent(credentials: [env.SSH_CRED]) {
                     sh '''
                         set -eu
 
-                        ssh -o StrictHostKeyChecking=yes \
-                            ${TARGET_USER}@${TARGET_HOST} \
-                            "set -eu;
-                             cd ${DEPLOY_DIR};
-                             python3 -m venv venv;
-                             venv/bin/python -m pip install --upgrade pip;
-                             venv/bin/python -m pip install -r requirements.txt;
-                             venv/bin/python -m pip install gunicorn;
-                             echo 'Python dependencies installed.'"
+                        ssh \
+                          -o StrictHostKeyChecking=yes \
+                          -o UserKnownHostsFile="$HOST_KEY_FILE" \
+                          "$TARGET_USER@$TARGET_HOST" \
+                          "set -eu;
+                           cd '$DEPLOY_DIR';
+                           python3 -m venv venv;
+                           venv/bin/python -m pip install --upgrade pip;
+                           venv/bin/python -m pip install -r requirements.txt;
+                           venv/bin/python -m pip install gunicorn;
+                           echo 'Dependencies installed successfully.'"
                     '''
                 }
             }
@@ -127,12 +138,14 @@ pipeline {
                     sh '''
                         set -eu
 
-                        ssh -o StrictHostKeyChecking=yes \
-                            ${TARGET_USER}@${TARGET_HOST} \
-                            "sudo env DEPLOY_DIR='${DEPLOY_DIR}' APP_NAME='${APP_NAME}' bash -s" <<'REMOTE'
+                        ssh \
+                          -o StrictHostKeyChecking=yes \
+                          -o UserKnownHostsFile="$HOST_KEY_FILE" \
+                          "$TARGET_USER@$TARGET_HOST" \
+                          "sudo bash -s" <<'REMOTE'
 set -eu
 
-cat > /etc/systemd/system/todolist.service <<EOF
+cat > /etc/systemd/system/todolist.service <<'SERVICE'
 [Unit]
 Description=Python ToDo List Application
 After=network.target
@@ -140,17 +153,17 @@ After=network.target
 [Service]
 User=ubuntu
 Group=www-data
-WorkingDirectory=${DEPLOY_DIR}
-Environment="PATH=${DEPLOY_DIR}/venv/bin"
-ExecStart=${DEPLOY_DIR}/venv/bin/gunicorn --workers 2 --bind 127.0.0.1:8000 app:app
+WorkingDirectory=/home/ubuntu/todolist
+Environment="PATH=/home/ubuntu/todolist/venv/bin"
+ExecStart=/home/ubuntu/todolist/venv/bin/gunicorn --workers 2 --bind 127.0.0.1:8000 app:app
 Restart=always
 RestartSec=5
 
 [Install]
 WantedBy=multi-user.target
-EOF
+SERVICE
 
-cat > /etc/nginx/sites-available/todolist <<'EOF'
+cat > /etc/nginx/sites-available/todolist <<'NGINX'
 server {
     listen 80 default_server;
     listen [::]:80 default_server;
@@ -164,16 +177,18 @@ server {
         proxy_set_header X-Forwarded-Proto $scheme;
     }
 }
-EOF
+NGINX
 
 ln -sfn /etc/nginx/sites-available/todolist \
     /etc/nginx/sites-enabled/todolist
 
+# Disable default site to avoid conflicting default_server
+rm -f /etc/nginx/sites-enabled/default
+
 nginx -t
 systemctl daemon-reload
-systemctl enable todolist
+systemctl enable todolist nginx
 systemctl restart todolist
-systemctl enable nginx
 systemctl restart nginx
 
 echo "Application service and Nginx configured."
@@ -189,17 +204,19 @@ REMOTE
                     sh '''
                         set -eu
 
-                        ssh -o StrictHostKeyChecking=yes \
-                            ${TARGET_USER}@${TARGET_HOST} \
-                            "set -eu;
-                             sudo systemctl is-active --quiet todolist;
-                             sudo systemctl is-active --quiet nginx;
-                             curl --fail --silent --show-error \
-                               --retry 5 --retry-delay 2 \
-                               http://127.0.0.1:8000/ >/dev/null;
-                             curl --fail --silent --show-error \
-                               http://127.0.0.1/ >/dev/null;
-                             echo 'Health checks passed.'"
+                        ssh \
+                          -o StrictHostKeyChecking=yes \
+                          -o UserKnownHostsFile="$HOST_KEY_FILE" \
+                          "$TARGET_USER@$TARGET_HOST" \
+                          "set -eu;
+                           sudo systemctl is-active --quiet todolist;
+                           sudo systemctl is-active --quiet nginx;
+                           curl --fail --silent --show-error \
+                             --retry 5 --retry-delay 2 \
+                             http://127.0.0.1:8000/ >/dev/null;
+                           curl --fail --silent --show-error \
+                             http://127.0.0.1/ >/dev/null;
+                           echo 'Health checks passed.'"
                     '''
                 }
             }
@@ -208,12 +225,12 @@ REMOTE
 
     post {
         success {
-            echo 'SUCCESS: Python ToDo List deployed and verified.'
-            echo 'Open http://YOUR_TARGET_EC2_PUBLIC_IP/'
+            echo 'SUCCESS: Python ToDoList deployed successfully.'
+            echo 'Website: http://52.207.246.170/'
         }
 
         failure {
-            echo 'FAILED: Check Console Output for the failed stage.'
+            echo 'FAILED: Check Console Output for the first error.'
         }
 
         always {
