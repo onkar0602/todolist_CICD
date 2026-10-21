@@ -10,11 +10,11 @@ pipeline {
 
     environment {
         // CHANGE THIS IP
-        TARGET_HOST = 'YOUR_TARGET_EC2_PUBLIC_IP'
+        TARGET_HOST = '52.207.246.170'
         TARGET_USER = 'ubuntu'
         DEPLOY_DIR  = '/home/ubuntu/todolist'
-        APP_NAME    = 'todolist'
-        SSH_CRED    = 'todolist-target-ssh'
+        APP_NAME    = 'TOdolist'
+        SSH_CRED    = 'pythonpyplinekey'
     }
 
     stages {
