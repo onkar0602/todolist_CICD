@@ -2,11 +2,10 @@
 pipeline {
     agent any
 
-    options {
-        timestamps()
-        disableConcurrentBuilds()
-        skipDefaultCheckout(true)
-    }
+   options {
+    disableConcurrentBuilds()
+    skipDefaultCheckout(true)
+}
 
     environment {
         // CHANGE THIS IP
