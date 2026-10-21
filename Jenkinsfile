@@ -27,7 +27,6 @@ pipeline {
                     test -f requirements.txt
                     test -f templates/index.html
                     test -d static
-
                     echo "Application source code verified."
                 '''
             }
@@ -39,7 +38,6 @@ pipeline {
                     set -eu
                     python3 --version
                     python3 -m py_compile app.py
-
                     echo "Python syntax validation successful."
                 '''
             }
@@ -59,12 +57,13 @@ pipeline {
                         mkdir -p "$(dirname "$HOST_KEY_FILE")"
                         chmod 700 "$(dirname "$HOST_KEY_FILE")"
 
-                        # Store the independently verified host key.
                         printf '%s\\n' "$TARGET_HOST_KEY" > "$HOST_KEY_FILE"
-
                         chmod 600 "$HOST_KEY_FILE"
 
-                        # Confirm the entry is for the expected host.
+                        # Verify that the entry contains a valid SSH key.
+                        ssh-keygen -lf "$HOST_KEY_FILE"
+
+                        # Confirm that the expected target IP is present.
                         ssh-keygen -F "$TARGET_HOST" \
                           -f "$HOST_KEY_FILE" >/dev/null
 
@@ -107,8 +106,7 @@ pipeline {
                           'sudo apt-get update &&
                            sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y \
                              python3 python3-pip python3-venv \
-                             python3-dev build-essential \
-                             nginx rsync curl'
+                             python3-dev build-essential nginx rsync curl'
 
                         echo "Target packages installed."
                     '''
