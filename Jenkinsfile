@@ -13,7 +13,7 @@ pipeline {
         TARGET_USER = 'ubuntu'
         DEPLOY_DIR  = '/home/ubuntu/todolist'
         APP_NAME    = 'TOdolist'
-        SSH_CRED    = 'pythonpyplinekey'
+        SSH_CRED    = 'pytho_cicd_key'
     }
 
     stages {
