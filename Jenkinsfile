@@ -8,16 +8,15 @@ pipeline {
     }
 
     environment {
-        TARGET_HOST  = '52.207.246.170'
-        TARGET_USER  = 'ubuntu'
-        DEPLOY_DIR   = '/home/ubuntu/todolist'
-        APP_NAME     = 'todolist'
-        SSH_CRED     = 'pytho_cicd_key'
+        TARGET_HOST   = '52.207.246.170'
+        TARGET_USER   = 'ubuntu'
+        DEPLOY_DIR    = '/home/ubuntu/todolist'
+        APP_NAME      = 'todolist'
+        SSH_CRED      = 'pytho_cicd_key'
         HOST_KEY_FILE = '/var/lib/jenkins/.ssh/known_hosts'
     }
 
     stages {
-
         stage('1. Checkout GitHub Code') {
             steps {
                 checkout scm
@@ -46,13 +45,40 @@ pipeline {
             }
         }
 
-        stage('3. Verify SSH Host Key and Connect') {
+        stage('3. Prepare Verified SSH Host Key') {
+            steps {
+                withCredentials([
+                    string(
+                        credentialsId: 'target-host-key',
+                        variable: 'TARGET_HOST_KEY'
+                    )
+                ]) {
+                    sh '''
+                        set -eu
+
+                        mkdir -p "$(dirname "$HOST_KEY_FILE")"
+                        chmod 700 "$(dirname "$HOST_KEY_FILE")"
+
+                        # Store the independently verified host key.
+                        printf '%s\\n' "$TARGET_HOST_KEY" > "$HOST_KEY_FILE"
+
+                        chmod 600 "$HOST_KEY_FILE"
+
+                        # Confirm the entry is for the expected host.
+                        ssh-keygen -F "$TARGET_HOST" \
+                          -f "$HOST_KEY_FILE" >/dev/null
+
+                        echo "Verified SSH host key is ready."
+                    '''
+                }
+            }
+        }
+
+        stage('4. Verify SSH Connection') {
             steps {
                 sshagent(credentials: [env.SSH_CRED]) {
                     sh '''
                         set -eu
-
-                        test -f "$HOST_KEY_FILE"
 
                         ssh \
                           -o BatchMode=yes \
@@ -67,20 +93,21 @@ pipeline {
             }
         }
 
-        stage('4. Install Python Environment on Target') {
+        stage('5. Install Python Environment on Target') {
             steps {
                 sshagent(credentials: [env.SSH_CRED]) {
                     sh '''
                         set -eu
 
                         ssh \
+                          -o BatchMode=yes \
                           -o StrictHostKeyChecking=yes \
                           -o UserKnownHostsFile="$HOST_KEY_FILE" \
                           "$TARGET_USER@$TARGET_HOST" \
                           'sudo apt-get update &&
-                           sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y
-                             python3 python3-pip python3-venv
-                             python3-dev build-essential
+                           sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y \
+                             python3 python3-pip python3-venv \
+                             python3-dev build-essential \
                              nginx rsync curl'
 
                         echo "Target packages installed."
@@ -89,7 +116,7 @@ pipeline {
             }
         }
 
-        stage('5. Transfer Application Files') {
+        stage('6. Transfer Application Files') {
             steps {
                 sshagent(credentials: [env.SSH_CRED]) {
                     sh '''
@@ -101,7 +128,7 @@ pipeline {
                           --exclude='.venv/' \
                           --exclude='__pycache__/' \
                           --exclude='.env' \
-                          -e "ssh -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$HOST_KEY_FILE" \
+                          -e "ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$HOST_KEY_FILE" \
                           ./ "$TARGET_USER@$TARGET_HOST:$DEPLOY_DIR/"
 
                         echo "Application files transferred."
@@ -110,13 +137,14 @@ pipeline {
             }
         }
 
-        stage('6. Create Virtual Environment and Install Dependencies') {
+        stage('7. Install Application Dependencies') {
             steps {
                 sshagent(credentials: [env.SSH_CRED]) {
                     sh '''
                         set -eu
 
                         ssh \
+                          -o BatchMode=yes \
                           -o StrictHostKeyChecking=yes \
                           -o UserKnownHostsFile="$HOST_KEY_FILE" \
                           "$TARGET_USER@$TARGET_HOST" \
@@ -132,13 +160,14 @@ pipeline {
             }
         }
 
-        stage('7. Configure Application Service and Nginx') {
+        stage('8. Configure Systemd and Nginx') {
             steps {
                 sshagent(credentials: [env.SSH_CRED]) {
                     sh '''
                         set -eu
 
                         ssh \
+                          -o BatchMode=yes \
                           -o StrictHostKeyChecking=yes \
                           -o UserKnownHostsFile="$HOST_KEY_FILE" \
                           "$TARGET_USER@$TARGET_HOST" \
@@ -182,7 +211,6 @@ NGINX
 ln -sfn /etc/nginx/sites-available/todolist \
     /etc/nginx/sites-enabled/todolist
 
-# Disable default site to avoid conflicting default_server
 rm -f /etc/nginx/sites-enabled/default
 
 nginx -t
@@ -191,20 +219,21 @@ systemctl enable todolist nginx
 systemctl restart todolist
 systemctl restart nginx
 
-echo "Application service and Nginx configured."
+echo "Systemd service and Nginx configured."
 REMOTE
                     '''
                 }
             }
         }
 
-        stage('8. Application Health Check') {
+        stage('9. Application Health Check') {
             steps {
                 sshagent(credentials: [env.SSH_CRED]) {
                     sh '''
                         set -eu
 
                         ssh \
+                          -o BatchMode=yes \
                           -o StrictHostKeyChecking=yes \
                           -o UserKnownHostsFile="$HOST_KEY_FILE" \
                           "$TARGET_USER@$TARGET_HOST" \
@@ -225,7 +254,7 @@ REMOTE
 
     post {
         success {
-            echo 'SUCCESS: Python ToDoList deployed successfully.'
+            echo 'SUCCESS: ToDoList deployed successfully.'
             echo 'Website: http://52.207.246.170/'
         }
 
